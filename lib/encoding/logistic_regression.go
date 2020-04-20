@@ -20,8 +20,9 @@ import (
 	"github.com/ldsec/drynx/lib/range"
 	"github.com/ldsec/unlynx/lib"
 
-	"github.com/montanaflynn/stats"
+	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/integrate"
+	"gonum.org/v1/gonum/mat"
 	"gonum.org/v1/gonum/stat"
 	"gonum.org/v1/gonum/stat/combin"
 )
@@ -52,29 +53,22 @@ func EncodeLogisticRegression(xData [][]float64, yData []int64, lrParameters lib
 	encryptedAggregatedApproxCoefficients := make([]libunlynx.CipherText, n)
 
 	if xData != nil && len(xData) > 0 {
-		// unpack the data into features and labels
-		/*labelColumn := 0
-		X := RemoveColumn(data, labelColumn)
-		y := Float64ToInt641DArray(GetColumn(data, labelColumn))*/
-
 		// standardise the data
-		var XStandardised [][]float64
+		X := Float2DToMatrix(xData)
 		if lrParameters.Means != nil && lrParameters.StandardDeviations != nil &&
 			len(lrParameters.Means) > 0 && len(lrParameters.StandardDeviations) > 0 {
 			// using global means and standard deviations, if given
 			log.Lvl2("Standardising the training set with global means and standard deviations...")
-			XStandardised = StandardiseWith(xData, lrParameters.Means, lrParameters.StandardDeviations)
+			StandardiseWith(X, lrParameters.Means, lrParameters.StandardDeviations)
 		} else {
 			// using local means and standard deviations, if not given
 			log.Lvl2("Standardising the training set with local means and standard deviations...")
-			var err error
-			if XStandardised, err = Standardise(xData); err != nil {
-				return nil, nil, err
-			}
+			Standardise(X)
 		}
 
 		// add an all 1s column to the data (offset term)
-		XStandardised = Augment(XStandardised)
+		X = Augment(X)
+		XStandardised := MatrixToFloat2D(X)
 
 		N := lrParameters.NbrRecords
 		// compute all approximation coefficients per record
@@ -134,29 +128,22 @@ func EncodeLogisticRegressionWithProofs(xData [][]float64, yData []int64, lrPara
 	encryptedAggregatedApproxCoefficientsOnlyCipher := make([]libunlynx.CipherText, n)
 
 	if xData != nil && len(xData) > 0 {
-		// unpack the data into features and labels
-		/*labelColumn := 0
-		X := RemoveColumn(data, labelColumn)
-		y := Float64ToInt641DArray(GetColumn(data, labelColumn))*/
-
 		// standardise the data
-		var XStandardised [][]float64
+		X := Float2DToMatrix(xData)
 		if lrParameters.Means != nil && lrParameters.StandardDeviations != nil &&
 			len(lrParameters.Means) > 0 && len(lrParameters.StandardDeviations) > 0 {
 			// using global means and standard deviations, if given
 			log.Lvl2("Standardising the training set with global means and standard deviations...")
-			XStandardised = StandardiseWith(xData, lrParameters.Means, lrParameters.StandardDeviations)
+			StandardiseWith(X, lrParameters.Means, lrParameters.StandardDeviations)
 		} else {
 			// using local means and standard deviations, if not given
 			log.Lvl2("Standardising the training set with local means and standard deviations...")
-			var err error
-			if XStandardised, err = Standardise(xData); err != nil {
-				return nil, nil, nil, err
-			}
+			Standardise(X)
 		}
 
 		// add an all 1s column to the data (offset term)
-		XStandardised = Augment(XStandardised)
+		X = Augment(X)
+		XStandardised := MatrixToFloat2D(X)
 
 		N := lrParameters.NbrRecords
 
@@ -903,123 +890,98 @@ func PredictHomomorphic(encryptedData libunlynx.CipherVector, weights []float64,
 //--------------------
 
 // ComputeMeans returns the means of each column of the given data matrix
-func ComputeMeans(data [][]float64) ([]float64, error) {
-	means := make([]float64, len(data[0]))
+func ComputeMeans(matrix mat.Matrix) []float64 {
+	rowCount, columnCount := matrix.Dims()
 
+	means := make([]float64, columnCount)
 	for i := range means {
-		feature, err := GetColumn(data, uint(i))
-		if err != nil {
-			return nil, err
+		column := make([]float64, rowCount)
+		for j := range column {
+			column[j] = matrix.At(j, i)
 		}
-		means[i], _ = stats.Mean(feature)
+
+		means[i] = stat.Mean(column, nil)
 	}
 
-	return means, nil
+	return means
 }
 
 // ComputeStandardDeviations returns the standard deviation of each column of the given data matrix
-func ComputeStandardDeviations(data [][]float64) ([]float64, error) {
-	standardDeviations := make([]float64, len(data[0]))
+func ComputeStandardDeviations(matrix mat.Matrix) []float64 {
+	rowCount, columnCount := matrix.Dims()
 
+	standardDeviations := make([]float64, columnCount)
 	for i := range standardDeviations {
-		feature, err := GetColumn(data, uint(i))
-		if err != nil {
-			return nil, err
+		column := make([]float64, rowCount)
+		for j := range column {
+			column[j] = matrix.At(j, i)
 		}
-		standardDeviations[i], _ = stats.StandardDeviation(feature)
+
+		standardDeviations[i] = stat.StdDev(column, nil)
 	}
 
-	return standardDeviations, nil
+	return standardDeviations
 }
 
 // Standardise returns the standardized 2D array version of the given 2D array
 // i.e. x' = (x - mean) / standard deviation
-func Standardise(matrix [][]float64) ([][]float64, error) {
-	return StandardiseWithTrain(matrix, matrix)
+func Standardise(matrix *mat.Dense) {
+	StandardiseWithTrain(matrix, matrix)
 }
 
 // StandardiseWithTrain standardises a matrix with the given matrix means and standard deviations
-func StandardiseWithTrain(matrixTest, matrixTrain [][]float64) ([][]float64, error) {
-	sds, err := ComputeStandardDeviations(matrixTrain)
-	if err != nil {
-		return nil, err
-	}
-	means, err := ComputeMeans(matrixTrain)
-	if err != nil {
-		return nil, err
-	}
+func StandardiseWithTrain(matrixTest *mat.Dense, matrixTrain mat.Matrix) {
+	sds := ComputeStandardDeviations(matrixTrain)
+	means := ComputeMeans(matrixTrain)
 
-	standardisedMatrix := make([][]float64, len(matrixTest))
-	for i, record := range matrixTest {
-		standardisedMatrix[i] = make([]float64, len(record))
-		for j, v := range record {
-			standardisedMatrix[i][j] = float64(v-means[j]) / sds[j]
-		}
-	}
-
-	return standardisedMatrix, nil
+	StandardiseWith(matrixTest, means, sds)
 }
 
 // StandardiseWith standardises a dataset column-wise using the given means and standard deviations
-func StandardiseWith(data [][]float64, means []float64, standardDeviations []float64) [][]float64 {
-
-	nbFeatures := len(data[0])
-
-	standardisedData := make([][]float64, len(data))
-
-	for record := 0; record < len(data); record++ {
-		standardisedData[record] = make([]float64, nbFeatures)
-		for i := 0; i < nbFeatures; i++ {
-			standardisedData[record][i] = float64(data[record][i]-means[i]) / standardDeviations[i]
-		}
-	}
-
-	return standardisedData
+func StandardiseWith(matrix *mat.Dense, means []float64, standardDeviations []float64) {
+	matrix.Apply(func(i, j int, v float64) float64 {
+		return float64(v-means[j]) / standardDeviations[j]
+	}, matrix)
 }
 
 // Normalize normalises a matrix column-wise
-func Normalize(matrix [][]float64) ([][]float64, error) {
-	return NormalizeWith(matrix, matrix)
+func Normalize(matrix *mat.Dense) {
+	NormalizeWith(matrix, matrix)
 }
 
 // NormalizeWith normalises a matrix column-wise with the given matrix min and max values
-func NormalizeWith(matrixTest, matrixTrain [][]float64) ([][]float64, error) {
-	nbFeatures := len(matrixTrain[0])
+func NormalizeWith(matrixTest *mat.Dense, matrixTrain mat.Matrix) {
+	rowCount, columnCount := matrixTrain.Dims()
 
-	min := make([]float64, nbFeatures)
-	max := make([]float64, nbFeatures)
-
-	for i := range matrixTrain[0] {
-		feature, err := GetColumn(matrixTrain, uint(i))
-		if err != nil {
-			return nil, err
+	min, max := make([]float64, columnCount), make([]float64, columnCount)
+	for i := range min {
+		column := make([]float64, rowCount)
+		for j := range column {
+			column[j] = matrixTrain.At(j, i)
 		}
 
-		min[i], _ = stats.Min(feature)
-		max[i], _ = stats.Max(feature)
+		min[i] = floats.Min(column)
+		max[i] = floats.Max(column)
 	}
 
-	normalizedMatrix := make([][]float64, len(matrixTest))
-	for i, record := range matrixTest {
-		normalizedMatrix[i] = make([]float64, len(record))
-		for j, v := range record {
-			normalizedMatrix[i][j] = float64(v-min[j]) / (max[j] - min[j])
-		}
-	}
-
-	return normalizedMatrix, nil
+	matrixTest.Apply(func(i, j int, v float64) float64 {
+		return (v - min[j]) / (max[j] - min[j])
+	}, matrixTest)
 }
 
 // Augment returns the given 2D array with an additional all 1's column prepended as the first column
-func Augment(matrix [][]float64) [][]float64 {
-	column := make([]float64, len(matrix))
-	for i := 0; i < len(matrix); i++ {
-		column[i] = 1
+func Augment(matrix mat.Matrix) *mat.Dense {
+	rowCount, columnCount := matrix.Dims()
+	ret := mat.NewDense(rowCount, columnCount+1, nil)
+
+	augment := mat.NewVecDense(rowCount, nil)
+	for i := 0; i < rowCount; i++ {
+		augment.SetVec(i, 1)
 	}
 
-	matrix = InsertColumn(matrix, column, 0)
+	ret.Augment(augment, matrix)
 
-	return matrix
+	return ret
 }
 
 // returns the given 2D array flattened into a 1D array
@@ -1272,40 +1234,27 @@ func String2DToFloat64(dataString [][]string) [][]float64 {
 
 // LoadData loads some specific datasets from file into a pair of feature matrix and label vector
 // the available datasets are: SPECTF, Pima, PCS and LBW
-func LoadData(dataset string, filename string) ([][]float64, []int64, error) {
-	labelColumn := uint(0)
-
-	data, err := ReadFile(filename, ',')
+func LoadData(dataset string, filename string) (*mat.Dense, *mat.VecDense, error) {
+	dense, err := ReadFile(filename, ',')
 	if err != nil {
 		return nil, nil, fmt.Errorf("when reading file: %w", err)
 	}
 
 	if dataset == "PCS" {
-		// remove the index column and the two last columns (unused)
-		for _, i := range []uint{11, 10, 0} {
-			var err error
-			if data, err = RemoveColumn(data, i); err != nil {
-				return nil, nil, err
-			}
-		}
+		rowCount, columnCount := dense.Dims()
+		dense = dense.Slice(0, rowCount, 1, columnCount-1).(*mat.Dense)
 	}
 
-	X, err := RemoveColumn(data, labelColumn)
-	if err != nil {
-		return nil, nil, err
-	}
-	yFloat, err := GetColumn(data, labelColumn)
-	if err != nil {
-		return nil, nil, err
-	}
-	y := Float64ToInt641DArray(yFloat)
+	rowCount, columnCount := dense.Dims()
+	yVector := dense.ColView(0)
+	matrix := dense.Slice(0, rowCount, 1, columnCount)
 
-	return X, y, nil
+	return matrix.(*mat.Dense), yVector.(*mat.VecDense), nil
 }
 
 // ReadFile reads a dataset from file into a string matrix
 // removes incorrectly formatted records
-func ReadFile(path string, separator rune) ([][]float64, error) {
+func ReadFile(path string, separator rune) (*mat.Dense, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("opening file: %w", err)
@@ -1316,8 +1265,9 @@ func ReadFile(path string, separator rune) ([][]float64, error) {
 	reader.Comma = separator
 	reader.TrimLeadingSpace = true
 
-	var records [][]float64
-	for {
+	var records []float64
+	lineCount := 0
+	for ; ; lineCount++ {
 		record, err := reader.Read()
 		if record == nil && errors.Is(err, io.EOF) {
 			break
@@ -1330,48 +1280,15 @@ func ReadFile(path string, separator rune) ([][]float64, error) {
 		for i, v := range record {
 			parsed, err := strconv.ParseFloat(v, 64)
 			if err != nil {
-				return nil, fmt.Errorf("parsing as float at line %v, element %v: %w", len(records), i, err)
+				return nil, fmt.Errorf("parsing as float at line %v, element %v: %w", lineCount, i, err)
 			}
 			line[i] = parsed
 		}
 
-		records = append(records, line)
+		records = append(records, line...)
 	}
 
-	return records, nil
-}
-
-// GetColumn returns the column at index <idx> in the given 2D array <matrix>
-func GetColumn(matrix [][]float64, idx uint) ([]float64, error) {
-	if len(matrix) < 0 {
-		return nil, errors.New("empty matrix")
-	}
-	if idx >= uint(len(matrix[0])) {
-		return nil, errors.New("column index exceeds matrix dimension")
-	}
-
-	array := make([]float64, len(matrix))
-	for i := range matrix {
-		array[i] = matrix[i][idx]
-	}
-
-	return array, nil
-}
-
-// RemoveColumn returns a 2D array with the column at index <idx> removed from the given 2D array <matrix>
-func RemoveColumn(matrix [][]float64, idx uint) ([][]float64, error) {
-	if idx >= uint(len(matrix[0])) {
-		return nil, errors.New("column index exceeds matrix dimension")
-	}
-
-	truncatedMatrix := make([][]float64, len(matrix))
-	for i := range matrix {
-		//truncatedMatrix[i] = make([]float64, len(matrix[i]) - 1)
-		truncatedMatrix[i] = append(truncatedMatrix[i], matrix[i][:idx]...)
-		truncatedMatrix[i] = append(truncatedMatrix[i], matrix[i][idx+1:]...)
-	}
-
-	return truncatedMatrix, nil
+	return mat.NewDense(lineCount, reader.FieldsPerRecord, records), nil
 }
 
 // ReplaceString replaces all strings <old> by string <new> in the given string matrix
@@ -1427,10 +1344,13 @@ func PartitionDataset(X [][]float64, y []int64, ratio float64, shuffle bool, see
 func GetDataForDataProvider(datasetName, filename string, dataProviderIdentity network.ServerIdentity) ([][]float64, []int64, error) {
 	var xForDP [][]float64
 	var yForDP []int64
-	X, y, err := LoadData(datasetName, filename)
+	matrix, vector, err := LoadData(datasetName, filename)
 	if err != nil {
 		return nil, nil, fmt.Errorf("when loading data: %w", err)
 	}
+	X := MatrixToFloat2D(matrix)
+	y := VectorToInt(vector)
+
 	dataProviderID := dataProviderIdentity.String()
 	dpID, err := strconv.Atoi(dataProviderID[len(dataProviderID)-2 : len(dataProviderID)-1])
 
@@ -1576,4 +1496,57 @@ func Float64ToInt642DArrayWithPrecision(arrayFloat64 [][]float64, precision floa
 // Round rounds a float number to the nearest <unit> digits
 func Round(x, unit float64) float64 {
 	return math.Round(x/unit) * unit
+}
+
+// MatrixToFloat2D converts a mat.Matrix to a [][]float64
+func MatrixToFloat2D(matrix mat.Matrix) [][]float64 {
+	rowCount, columnCount := matrix.Dims()
+
+	ret := make([][]float64, rowCount)
+	for i := range ret {
+		row := make([]float64, columnCount)
+		for j := range row {
+			row[j] = matrix.At(i, j)
+		}
+		ret[i] = row
+	}
+
+	return ret
+}
+
+// Float2DToMatrix converts a rectangular [][]float64 to mat.Dense
+func Float2DToMatrix(matrix [][]float64) *mat.Dense {
+	rowCount, columnCount := len(matrix), len(matrix[0])
+
+	ret := mat.NewDense(rowCount, columnCount, nil)
+	for i, row := range matrix {
+		for j, v := range row {
+			ret.Set(i, j, v)
+		}
+	}
+
+	return ret
+}
+
+// VectorToInt converts a mat.Vector to a []int64
+func VectorToInt(vector mat.Vector) []int64 {
+	ret := make([]int64, vector.Len())
+	for i := range ret {
+		ret[i] = int64(vector.AtVec(i))
+	}
+	return ret
+}
+
+// VectorToFloat converts a mat.Vector to a []float64
+func VectorToFloat(vector mat.Vector) []float64 {
+	ret := make([]float64, vector.Len())
+	for i := range ret {
+		ret[i] = vector.AtVec(i)
+	}
+	return ret
+}
+
+// FloatToVector converts a []float64 to mat.VecDense
+func FloatToVector(vector []float64) *mat.VecDense {
+	return mat.NewVecDense(len(vector), vector)
 }

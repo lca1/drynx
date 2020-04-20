@@ -395,21 +395,19 @@ func TestServiceDrynxLogisticRegressionForSPECTF(t *testing.T) {
 	filePathTraining := "../data/SPECTF_heart_dataset_training.txt"
 	filePathTesting := "../data/SPECTF_heart_dataset_testing.txt"
 
-	XTrain, _, err := libdrynxencoding.LoadData("SPECTF", filePathTraining)
+	trainMatrix, _, err := libdrynxencoding.LoadData("SPECTF", filePathTraining)
 	require.NoError(t, err)
-	XTest, yTest, err := libdrynxencoding.LoadData("SPECTF", filePathTesting)
+	testMatrix, testVector, err := libdrynxencoding.LoadData("SPECTF", filePathTesting)
 	require.NoError(t, err)
 
-	var means = make([]float64, 0)
-	var standardDeviations = make([]float64, 0)
+	XTrain := libdrynxencoding.MatrixToFloat2D(trainMatrix)
+	XTest, yTest := libdrynxencoding.MatrixToFloat2D(testMatrix), libdrynxencoding.VectorToInt(testVector)
+
+	var means []float64
+	var standardDeviations []float64
 	if standardisationMode == 0 || standardisationMode == 1 {
-		means, err = libdrynxencoding.ComputeMeans(XTrain)
-		require.NoError(t, err)
-		standardDeviations, err = libdrynxencoding.ComputeStandardDeviations(XTrain)
-		require.NoError(t, err)
-	} else {
-		means = nil
-		standardDeviations = nil
+		means = libdrynxencoding.ComputeMeans(libdrynxencoding.Float2DToMatrix(XTrain))
+		standardDeviations = libdrynxencoding.ComputeStandardDeviations(libdrynxencoding.Float2DToMatrix(XTrain))
 	}
 
 	lrParameters.DatasetName = "SPECTF"
@@ -827,8 +825,10 @@ func TestServiceDrynxLogisticRegression(t *testing.T) {
 	fmt.Println(filepath)
 
 	// load the dataset
-	X, y, err := libdrynxencoding.LoadData(dataset, filepath)
+	matrix, vector, err := libdrynxencoding.LoadData(dataset, filepath)
 	require.NoError(t, err)
+
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 
 	for i := 0; i < numberTrials; i++ {
 		log.Lvl1("Evaluating prediction on dataset for trial:", i)
@@ -858,16 +858,11 @@ func TestServiceDrynxLogisticRegression(t *testing.T) {
 			_, err = fileTesting.WriteString(fmt.Sprintln(testingSet[i][len(testingSet[i])-1]))
 		}
 
-		var means = make([]float64, 0)
-		var standardDeviations = make([]float64, 0)
+		var means []float64
+		var standardDeviations []float64
 		if standardisationMode == 0 || standardisationMode == 1 {
-			means, err = libdrynxencoding.ComputeMeans(XTrain)
-			require.NoError(t, err)
-			standardDeviations, err = libdrynxencoding.ComputeStandardDeviations(XTrain)
-			require.NoError(t, err)
-		} else {
-			means = nil
-			standardDeviations = nil
+			means = libdrynxencoding.ComputeMeans(libdrynxencoding.Float2DToMatrix(XTrain))
+			standardDeviations = libdrynxencoding.ComputeStandardDeviations(libdrynxencoding.Float2DToMatrix(XTrain))
 		}
 
 		lrParameters.FilePath = filePathTraining
@@ -1001,20 +996,18 @@ func performanceEvaluation(weights []float64, XTest [][]float64, yTest []int64, 
 	float64, float64, float64, float64, error) {
 	fmt.Println("weights:", weights)
 
+	X := libdrynxencoding.Float2DToMatrix(XTest)
 	if means != nil && standardDeviations != nil &&
 		len(means) > 0 && len(standardDeviations) > 0 {
 		// using global means and standard deviations, if given
 		log.Lvl1("Standardising the testing set with global means and standard deviations...")
-		XTest = libdrynxencoding.StandardiseWith(XTest, means, standardDeviations)
+		libdrynxencoding.StandardiseWith(X, means, standardDeviations)
 	} else {
 		// using local means and standard deviations, if not given
 		log.Lvl1("Standardising the testing set with local means and standard deviations...")
-		var err error
-		XTest, err = libdrynxencoding.Standardise(XTest)
-		if err != nil {
-			return 0, 0, 0, 0, 0, err
-		}
+		libdrynxencoding.Standardise(X)
 	}
+	XTest = libdrynxencoding.MatrixToFloat2D(X)
 
 	predictions := make([]int64, len(XTest))
 	predictionsFloat := make([]float64, len(XTest))
@@ -1137,21 +1130,19 @@ func TestServiceDrynxLogisticRegressionV2(t *testing.T) {
 	filePathTraining := "../data/" + dataset + "_dataset_training.txt"
 	filePathTesting := "../data/" + dataset + "_dataset_testing.txt"
 
-	XTrain, _, err := libdrynxencoding.LoadData(dataset, filePathTraining)
+	trainMatrix, _, err := libdrynxencoding.LoadData(dataset, filePathTraining)
 	require.NoError(t, err)
-	XTest, yTest, err := libdrynxencoding.LoadData(dataset, filePathTesting)
+	testMatrix, testVector, err := libdrynxencoding.LoadData(dataset, filePathTesting)
 	require.NoError(t, err)
 
-	var means = make([]float64, 0)
-	var standardDeviations = make([]float64, 0)
+	XTrain := libdrynxencoding.MatrixToFloat2D(trainMatrix)
+	XTest, yTest := libdrynxencoding.MatrixToFloat2D(testMatrix), libdrynxencoding.VectorToInt(testVector)
+
+	var means []float64
+	var standardDeviations []float64
 	if standardisationMode == 0 || standardisationMode == 1 {
-		means, err = libdrynxencoding.ComputeMeans(XTrain)
-		require.NoError(t, err)
-		standardDeviations, err = libdrynxencoding.ComputeStandardDeviations(XTrain)
-		require.NoError(t, err)
-	} else {
-		means = nil
-		standardDeviations = nil
+		means = libdrynxencoding.ComputeMeans(libdrynxencoding.Float2DToMatrix(XTrain))
+		standardDeviations = libdrynxencoding.ComputeStandardDeviations(libdrynxencoding.Float2DToMatrix(XTrain))
 	}
 
 	lrParameters.FilePath = filePathTraining
@@ -1523,21 +1514,19 @@ func TestServiceDrynxLogisticRegressionBC(t *testing.T) {
 	filePathTraining := "../tmpdata/" + dataset + "_dataset_training.txt"
 	filePathTesting := "../tmpdata/" + dataset + "_dataset_testing.txt"
 
-	XTrain, _, err := libdrynxencoding.LoadData(dataset, filePathTraining)
+	trainMatrix, _, err := libdrynxencoding.LoadData(dataset, filePathTraining)
 	require.NoError(t, err)
-	XTest, yTest, err := libdrynxencoding.LoadData(dataset, filePathTesting)
+	testMatrix, testVector, err := libdrynxencoding.LoadData(dataset, filePathTesting)
 	require.NoError(t, err)
 
-	var means = make([]float64, 0)
-	var standardDeviations = make([]float64, 0)
+	XTrain := libdrynxencoding.MatrixToFloat2D(trainMatrix)
+	XTest, yTest := libdrynxencoding.MatrixToFloat2D(testMatrix), libdrynxencoding.VectorToInt(testVector)
+
+	var means []float64
+	var standardDeviations []float64
 	if standardisationMode == 0 || standardisationMode == 1 {
-		means, err = libdrynxencoding.ComputeMeans(XTrain)
-		require.NoError(t, err)
-		standardDeviations, err = libdrynxencoding.ComputeStandardDeviations(XTrain)
-		require.NoError(t, err)
-	} else {
-		means = nil
-		standardDeviations = nil
+		means = libdrynxencoding.ComputeMeans(libdrynxencoding.Float2DToMatrix(XTrain))
+		standardDeviations = libdrynxencoding.ComputeStandardDeviations(libdrynxencoding.Float2DToMatrix(XTrain))
 	}
 
 	lrParameters.FilePath = filePathTraining
@@ -1928,21 +1917,19 @@ func TestServiceDrynxLogisticRegressionGSE(t *testing.T) {
 	filePathTraining := "../tmpdata/" + dataset + "_dataset_training.txt"
 	filePathTesting := "../tmpdata/" + dataset + "_dataset_testing.txt"
 
-	XTrain, _, err := libdrynxencoding.LoadData(dataset, filePathTraining)
+	trainMatrix, _, err := libdrynxencoding.LoadData(dataset, filePathTraining)
 	require.NoError(t, err)
-	XTest, yTest, err := libdrynxencoding.LoadData(dataset, filePathTesting)
+	testMatrix, testVector, err := libdrynxencoding.LoadData(dataset, filePathTesting)
 	require.NoError(t, err)
 
-	var means = make([]float64, 0)
-	var standardDeviations = make([]float64, 0)
+	XTrain := libdrynxencoding.MatrixToFloat2D(trainMatrix)
+	XTest, yTest := libdrynxencoding.MatrixToFloat2D(testMatrix), libdrynxencoding.VectorToInt(testVector)
+
+	var means []float64
+	var standardDeviations []float64
 	if standardisationMode == 0 || standardisationMode == 1 {
-		means, err = libdrynxencoding.ComputeMeans(XTrain)
-		require.NoError(t, err)
-		standardDeviations, err = libdrynxencoding.ComputeStandardDeviations(XTrain)
-		require.NoError(t, err)
-	} else {
-		means = nil
-		standardDeviations = nil
+		means = libdrynxencoding.ComputeMeans(libdrynxencoding.Float2DToMatrix(XTrain))
+		standardDeviations = libdrynxencoding.ComputeStandardDeviations(libdrynxencoding.Float2DToMatrix(XTrain))
 	}
 
 	lrParameters.FilePath = filePathTraining

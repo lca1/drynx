@@ -44,11 +44,10 @@ func compareFindMinimumWeights(Xtrain [][]float64, ytrain []int64, parameters Mi
 	step := parameters.step
 	maxIterations := parameters.maxIterations
 	initialWeights := parameters.initialWeights
-	Xtrain, err := libdrynxencoding.Standardise(Xtrain)
-	if err != nil {
-		return err
-	}
-	Xtrain = libdrynxencoding.Augment(Xtrain)
+	X := libdrynxencoding.Float2DToMatrix(Xtrain)
+	libdrynxencoding.Standardise(X)
+	X = libdrynxencoding.Augment(X)
+	Xtrain = libdrynxencoding.MatrixToFloat2D(X)
 	// data providers part + servers part + client part collapsed here for testing
 
 	var weights []float64
@@ -83,7 +82,6 @@ func findMinimumWeights(X [][]float64, y []int64, k int, maxIterations int, step
 
 	// each data provider computes its approximation coefficients on its side and then sends them to its chosen server
 	N := len(X)
-	N64 := int64(N)
 	approxCoefficients := make([][][]float64, N)
 	for i := range X {
 		approxCoefficients[i] = libdrynxencoding.ComputeAllApproxCoefficients(X[i], y[i], k)
@@ -92,7 +90,7 @@ func findMinimumWeights(X [][]float64, y []int64, k int, maxIterations int, step
 
 	// the client computes the weights on its side
 	weights := libdrynxencoding.FindMinimumWeights(aggregatedApproxCoefficients,
-		initialWeights, N64,
+		initialWeights, int64(N),
 		lambda, step, maxIterations)
 
 	log.Lvl2("weights 1", weights)
@@ -148,14 +146,13 @@ func predict(Xtrain [][]float64, ytrain []int64,
 	log.Lvl2("init:", initialWeights)
 
 	// save the original training set in order to standardise the testing set
-	XtrainSaved := Xtrain
+	XtrainSaved := libdrynxencoding.Float2DToMatrix(Xtrain)
 
 	// data pre-processing
-	Xtrain, err := libdrynxencoding.Standardise(Xtrain)
-	if err != nil {
-		return 0, 0, 0, 0, 0, err
-	}
-	Xtrain = libdrynxencoding.Augment(Xtrain)
+	matrixXTrain := libdrynxencoding.Float2DToMatrix(Xtrain)
+	libdrynxencoding.Standardise(matrixXTrain)
+	matrixXTrain = libdrynxencoding.Augment(matrixXTrain)
+	Xtrain = libdrynxencoding.MatrixToFloat2D(matrixXTrain)
 
 	// the client's (public key, private key) pair
 	keys := key.NewKeyPair(libunlynx.SuiTe)
@@ -185,14 +182,13 @@ func predict(Xtrain [][]float64, ytrain []int64,
 
 	// prediction computation
 	// standardise the testing set using the mean and standard deviation of the training set
+	matrixXTest := libdrynxencoding.Float2DToMatrix(Xtest)
 	if preprocessing == PREPROCESSING_STANDARDIZE {
-		Xtest, err = libdrynxencoding.StandardiseWithTrain(Xtest, XtrainSaved)
+		libdrynxencoding.StandardiseWithTrain(matrixXTest, XtrainSaved)
 	} else if preprocessing == PREPROCESSING_NORMALIZE {
-		Xtest, err = libdrynxencoding.NormalizeWith(Xtest, XtrainSaved)
+		libdrynxencoding.NormalizeWith(matrixXTest, XtrainSaved)
 	}
-	if err != nil {
-		return 0, 0, 0, 0, 0, err
-	}
+	Xtest = libdrynxencoding.MatrixToFloat2D(matrixXTest)
 	// note: the test data does not need to be augmented with 1s
 
 	predictions := make([]int64, len(Xtest))
@@ -437,8 +433,10 @@ func TestFindMinimumWeightsForSPECTF(t *testing.T) {
 	log.Lvl2("-------------------------------")
 
 	parameters, _, preprocessing, SPECTFTraining, _, _, precisionApproxCoefficients, _, _ := getParametersForSPECTF()
-	X, y, err := libdrynxencoding.LoadData("SPECTF", SPECTFTraining)
+	matrix, vector, err := libdrynxencoding.LoadData("SPECTF", SPECTFTraining)
 	require.NoError(t, err)
+
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 
 	require.NoError(t, compareFindMinimumWeights(X, y, parameters, preprocessing, false, precisionApproxCoefficients, SPECTFpaperWeightsWithoutEncryption))
 }
@@ -448,8 +446,10 @@ func TestFindMinimumWeightsWithEncryptionForSPECTF(t *testing.T) {
 	log.Lvl2("-----------------------------------------------")
 
 	parameters, _, preprocessing, SPECTFTraining, _, _, precisionApproxCoefficients, _, _ := getParametersForSPECTF()
-	X, y, err := libdrynxencoding.LoadData("SPECTF", SPECTFTraining)
+	matrix, vector, err := libdrynxencoding.LoadData("SPECTF", SPECTFTraining)
 	require.NoError(t, err)
+
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 
 	require.NoError(t, compareFindMinimumWeights(X, y, parameters, preprocessing, true, precisionApproxCoefficients, SPECTFpaperWeightsWithEncryption))
 }
@@ -458,14 +458,17 @@ func predictForSPECTF(weights []float64, withEncryption bool) error {
 	parameters, _, preprocessing, SPECTFTraining, SPECTFTesting, _, precisionApproxCoefficients,
 		precisionData, precisionWeights := getParametersForSPECTF()
 
-	Xtrain, ytrain, err := libdrynxencoding.LoadData("SPECTF", SPECTFTraining)
+	trainMatrix, trainVector, err := libdrynxencoding.LoadData("SPECTF", SPECTFTraining)
 	if err != nil {
 		return err
 	}
-	Xtest, ytest, err := libdrynxencoding.LoadData("SPECTF", SPECTFTesting)
+	testMatrix, testVector, err := libdrynxencoding.LoadData("SPECTF", SPECTFTesting)
 	if err != nil {
 		return err
 	}
+
+	Xtrain, ytrain := libdrynxencoding.MatrixToFloat2D(trainMatrix), libdrynxencoding.VectorToInt(trainVector)
+	Xtest, ytest := libdrynxencoding.MatrixToFloat2D(testMatrix), libdrynxencoding.VectorToInt(testVector)
 
 	accuracy, precision, recall, fscore, auc, err := predict(Xtrain, ytrain, Xtest, ytest, weights, parameters,
 		preprocessing, withEncryption, precisionApproxCoefficients, precisionData, precisionWeights)
@@ -499,8 +502,9 @@ func TestPredictForSPECTFRandom(t *testing.T) {
 
 	numberTrials := 1 //10
 	initSeed := int64(5432109876)
-	X, y, err := libdrynxencoding.LoadData("SPECTF", SPECTFAll)
+	matrix, vector, err := libdrynxencoding.LoadData("SPECTF", SPECTFAll)
 	require.NoError(t, err)
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 
 	require.NoError(t, predictWithRandomSplit(X, y, nil, ratio, parameters, preprocessing, precisionApproxCoefficients, precisionData,
 		precisionWeights, false, numberTrials, initSeed))
@@ -545,10 +549,13 @@ func TestPredictForSPECTFWithGoml(t *testing.T) {
 	}
 
 	parameters, _, _, SPECTFTraining, SPECTFTesting, _, _, _, _ := getParametersForSPECTF()
-	Xtrain, ytrain, err := libdrynxencoding.LoadData("SPECTF", SPECTFTraining)
+	trainMatrix, trainVector, err := libdrynxencoding.LoadData("SPECTF", SPECTFTraining)
 	require.NoError(t, err)
-	Xtest, ytest, err := libdrynxencoding.LoadData("SPECTF", SPECTFTesting)
+	testMatrix, testVector, err := libdrynxencoding.LoadData("SPECTF", SPECTFTesting)
 	require.NoError(t, err)
+
+	Xtrain, ytrain := libdrynxencoding.MatrixToFloat2D(trainMatrix), libdrynxencoding.VectorToInt(trainVector)
+	Xtest, ytest := libdrynxencoding.MatrixToFloat2D(testMatrix), libdrynxencoding.VectorToInt(testVector)
 
 	model := linear.NewLogistic(base.BatchGA, parameters.step, parameters.lambda, parameters.maxIterations, Xtrain,
 		libdrynxencoding.Int64ToFloat641DArray(ytrain))
@@ -589,8 +596,11 @@ func TestLPredictForSPECTFRandomWtihGoml(t *testing.T) {
 	}
 
 	parameters, _, _, _, path, _, _, _, _ := getParametersForSPECTF()
-	X, y, err := libdrynxencoding.LoadData("SPECTF", path)
+	matrix, vector, err := libdrynxencoding.LoadData("SPECTF", path)
 	require.NoError(t, err)
+
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
+
 	predictGoml(X, y, 0.3, parameters, 1000, int64(5432109876))
 }
 
@@ -640,8 +650,9 @@ func TestFindMinimumWeightsForPima(t *testing.T) {
 	log.Lvl2("-----------------------------")
 
 	parameters, _, preprocessing, path, precisionApproxCoefficieents, _, _ := getParametersForPima()
-	X, y, err := libdrynxencoding.LoadData("Pima", path)
+	matrix, vector, err := libdrynxencoding.LoadData("Pima", path)
 	require.NoError(t, err)
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 	require.NoError(t, compareFindMinimumWeights(X, y, parameters, preprocessing, false, precisionApproxCoefficieents, PimaPaperWeightsWithoutEncryption))
 }
 
@@ -654,8 +665,9 @@ func TestFindMinimumWeightsWithEncryptionForPima(t *testing.T) {
 	log.Lvl2("---------------------------------------------")
 
 	parameters, _, preprocessing, path, precisionApproxCoefficients, _, _ := getParametersForPima()
-	X, y, err := libdrynxencoding.LoadData("Pima", path)
+	matrix, vector, err := libdrynxencoding.LoadData("Pima", path)
 	require.NoError(t, err)
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 	require.NoError(t, compareFindMinimumWeights(X, y, parameters, preprocessing, true, precisionApproxCoefficients, PimaPaperWeightsWithEncryption))
 }
 
@@ -671,8 +683,10 @@ func TestPredictForPima(t *testing.T) {
 		precisionWeights := getParametersForPima()
 	numberTrials := 10
 	initSeed := int64(5432109876)
-	X, y, err := libdrynxencoding.LoadData("Pima", path)
+	matrix, vector, err := libdrynxencoding.LoadData("Pima", path)
 	require.NoError(t, err)
+
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 
 	require.NoError(t, predictWithRandomSplit(X, y, nil, ratio, parameters, preprocessing, precisionApproxCoefficients, precisionData,
 		precisionWeights, false, numberTrials, initSeed))
@@ -690,8 +704,10 @@ func TestPredictWithEncryptionForPima(t *testing.T) {
 		precisionWeights := getParametersForPima()
 	numberTrials := 10
 	initSeed := int64(5432109876)
-	X, y, err := libdrynxencoding.LoadData("Pima", path)
+	matrix, vector, err := libdrynxencoding.LoadData("Pima", path)
 	require.NoError(t, err)
+
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 
 	require.NoError(t, predictWithRandomSplit(X, y, nil, ratio, parameters, preprocessing, precisionApproxCoefficients, precisionData,
 		precisionWeights, true, numberTrials, initSeed))
@@ -709,8 +725,10 @@ func TestPredictForPimaPaper(t *testing.T) {
 		precisionWeights := getParametersForPima()
 	numberTrials := 10
 	initSeed := int64(5432109876)
-	X, y, err := libdrynxencoding.LoadData("Pima", path)
+	matrix, vector, err := libdrynxencoding.LoadData("Pima", path)
 	require.NoError(t, err)
+
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 
 	require.NoError(t, predictWithRandomSplit(X, y, PimaPaperWeightsWithoutEncryption, ratio, parameters, preprocessing,
 		precisionApproxCoefficients, precisionData, precisionWeights,
@@ -732,8 +750,10 @@ func TestPredictForPimaMatlab(t *testing.T) {
 		precisionWeights := getParametersForPima()
 	numberTrials := 10
 	initSeed := int64(5432109876)
-	X, y, err := libdrynxencoding.LoadData("Pima", path)
+	matrix, vector, err := libdrynxencoding.LoadData("Pima", path)
 	require.NoError(t, err)
+
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 
 	require.NoError(t, predictWithRandomSplit(X, y, PimaMatlabWeights, ratio, parameters, preprocessing, precisionApproxCoefficients,
 		precisionData, precisionWeights,
@@ -751,8 +771,10 @@ func TestPredictWithEncryptionForPimaPaper(t *testing.T) {
 	parameters, ratio, preprocessing, path, precisionApproxCoefficients, precisionData, precisionWeights := getParametersForPima()
 	numberTrials := 10
 	initSeed := int64(5432109876)
-	X, y, err := libdrynxencoding.LoadData("Pima", path)
+	matrix, vector, err := libdrynxencoding.LoadData("Pima", path)
 	require.NoError(t, err)
+
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 
 	require.NoError(t, predictWithRandomSplit(X, y, PimaPaperWeightsWithEncryption, ratio, parameters, preprocessing,
 		precisionApproxCoefficients, precisionData, precisionWeights,
@@ -765,8 +787,11 @@ func TestPredictForPimaWithGoml(t *testing.T) {
 	}
 
 	parameters, ratio, _, path, _, _, _ := getParametersForPima()
-	X, y, err := libdrynxencoding.LoadData("Pima", path)
+	matrix, vector, err := libdrynxencoding.LoadData("Pima", path)
 	require.NoError(t, err)
+
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
+
 	predictGoml(X, y, ratio, parameters, 10, int64(5432109876))
 }
 
@@ -805,8 +830,9 @@ func TestPredictForPCS(t *testing.T) {
 		precisionWeights := getParametersForPCS()
 	numberTrials := 10
 	initSeed := int64(5432109876)
-	X, y, err := libdrynxencoding.LoadData("PCS", path)
+	matrix, vector, err := libdrynxencoding.LoadData("PCS", path)
 	require.NoError(t, err)
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 
 	require.NoError(t, predictWithRandomSplit(X, y, nil, ratio, parameters, preprocessing, precisionApproxCoefficients, precisionData,
 		precisionWeights, false, numberTrials, initSeed))
@@ -818,7 +844,8 @@ func TestPredictForPCSWithGoml(t *testing.T) {
 	}
 
 	parameters, ratio, _, path, _, _, _ := getParametersForPCS()
-	X, y, err := libdrynxencoding.LoadData("PCS", path)
+	matrix, vector, err := libdrynxencoding.LoadData("PCS", path)
 	require.NoError(t, err)
+	X, y := libdrynxencoding.MatrixToFloat2D(matrix), libdrynxencoding.VectorToInt(vector)
 	predictGoml(X, y, ratio, parameters, 5, int64(5432109876))
 }
